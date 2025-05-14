@@ -1,0 +1,16 @@
+*.zip
+
+# Ignore all .pt files
+*.pt
+*.zip
+
+# Ignore directories
+data_colorization/
+FULL_VERTICAL_PINEAPPLE/
+wandb/
+__pycache__/
+
+/data
+/wandb
+/checkpoints_cifar
+/FULL_VERTICAL_PINEAPPLE.zip

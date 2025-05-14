@@ -1,0 +1,3 @@
+[submodule "VAE_training"]
+	path = VAE_training
+	url = git@github.com:ManfredGonzalez/VAE_training.git
