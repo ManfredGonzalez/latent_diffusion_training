@@ -15,3 +15,5 @@ __pycache__/
 /checkpoints_cifar
 /FULL_VERTICAL_PINEAPPLE.zip
 recontructed_image.pdf
+*.sbatch
+*.txt
