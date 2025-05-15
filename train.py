@@ -173,12 +173,7 @@ def main():
                 args.chkps_logging_path,
                 f"diffusion_best_epoch{epoch}_loss{avg_loss:.4f}.pt"
             )
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': diffusion_model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': avg_loss
-            }, chkpt_path)
+            torch.save(diffusion_model.state_dict(), chkpt_path)
             print(f"  ↳ New best model saved to {chkpt_path}")
         else:
             epochs_no_improve += 1
