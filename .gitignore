@@ -17,3 +17,4 @@ __pycache__/
 recontructed_image.pdf
 *.sbatch
 *.txt
+*.out
