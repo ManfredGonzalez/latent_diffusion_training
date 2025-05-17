@@ -59,7 +59,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train latent-space DDPM on VAE latents")
     parser.add_argument("--dataset_path", type=str, required=True,
                         help="Glob path to pineapple images, e.g. '/path/to/*' ")
-    parser.add_argument("--batch_size", type=int, default=8,
+    parser.add_argument("--batch_size", type=int, default=2,
                         help="Training batch size")
     parser.add_argument("--num_workers", type=int, default=4,
                         help="Number of DataLoader workers")
@@ -135,8 +135,7 @@ def main():
 
                 # 2. Sample per-sample timesteps and add noise
                 t = torch.randint(0, T, (b,), device=device)
-                noisy_lat = sampler.add_noise(latent, sampler.timesteps[t])
-                actual_noise = noisy_lat - latent
+                noisy_lat,actual_noise = sampler.add_noise(latent, t)
 
                 # 3. Time embedding and prediction
                 t_emb = get_time_embedding(t).to(device)           # (B, 320)
