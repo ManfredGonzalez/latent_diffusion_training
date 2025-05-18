@@ -18,3 +18,4 @@ recontructed_image.pdf
 *.sbatch
 *.txt
 *.out
+/.vscode
