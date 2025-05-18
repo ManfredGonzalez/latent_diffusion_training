@@ -1,11 +1,16 @@
 # Latent Diffusion for Aerial Pineapple Generation
 ## create a conda env:
+```bash
 conda create -n ddpm_training python=3.10
+
 conda activate ddpm_training
+
 pip install numpy tqdm pillow pyYaml
+
 pip3 install torch torchvision torchaudio
 pip install opencv-python
 pip install wandb
+```
 ## Steps to clone this repo:
 
 1. Clone it in an empty directory with the following command:
