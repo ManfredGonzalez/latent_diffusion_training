@@ -12,6 +12,7 @@ from Dataset import PineappleDataset
 from diffusion import Diffusion
 from ddpm import DDPMSampler
 import wandb
+import numpy as np
 #get the current working directory
 current_dir = os.getcwd()
 path_to_add = os.path.join(current_dir,"VAE_training")
@@ -71,7 +72,7 @@ def parse_args():
                         help="Directory to save checkpoint files")
     parser.add_argument("--epochs", type=int, default=50,
                         help="Number of training epochs")
-    parser.add_argument("--patience", type=int, default=5,
+    parser.add_argument("--patience", type=int, default=-1,
                         help="Early stopping patience in epochs")
     parser.add_argument("--es_min_delta", type=float, default=0.0,
                         help="Early stopping delta in epochs")
@@ -121,7 +122,7 @@ def main():
     for epoch in range(1, args.epochs + 1):
         epoch_loss = 0.0
         diffusion_model.train()
-
+        epoch_losses = []
         with tqdm(total=len(loader), desc=f"Epoch {epoch}/{args.epochs}", unit="batch") as pbar:
             for batch in loader:
                 imgs = batch['image'].to(device)
@@ -158,12 +159,15 @@ def main():
                 )
 
                 epoch_loss += loss.item()
+                epoch_losses.append(loss.item())
                 pbar.set_postfix(loss=loss.item())
                 pbar.update(1)
 
         avg_loss = epoch_loss / len(loader)
-        print(f"Epoch {epoch}/{args.epochs} — Avg Loss: {avg_loss:.4f}")
+        epoch_loss_std = np.std(epoch_losses)
+        print(f"Epoch {epoch}/{args.epochs} — Avg Loss: {avg_loss:.4f} ± {epoch_loss_std:.4f}")
         wandb.log({"train/epoch_loss": avg_loss, "epoch": epoch}, step=global_step)
+        wandb.log({"train/epoch_loss_std": epoch_loss_std, "epoch": epoch}, step=global_step)
         # Check for improvement
         if avg_loss + es_min_delta < best_loss:
             best_loss = avg_loss
@@ -178,11 +182,18 @@ def main():
             epochs_no_improve += 1
             print(f"  ↳ No improvement for {epochs_no_improve} epoch(s)")
 
-        # Early stopping
-        if epochs_no_improve >= args.patience:
-            print(f"Stopping early after {epoch} epochs (patience {args.patience})")
-            break
-
+        if args.patience != -1:
+            # Early stopping
+            if epochs_no_improve >= args.patience:
+                print(f"Stopping early after {epoch} epochs (patience {args.patience})")
+                break
+    # Final save
+    final_chkpt_path = os.path.join(
+        args.chkps_logging_path,
+        f"diffusion_final_epoch{epoch}_loss{avg_loss:.4f}.pt"
+    )
+    torch.save(diffusion_model.state_dict(), final_chkpt_path)
+    print(f"Final model saved to {final_chkpt_path}")
     print("Training complete.")
 
 

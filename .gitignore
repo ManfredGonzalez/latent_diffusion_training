@@ -19,3 +19,5 @@ recontructed_image.pdf
 *.txt
 *.out
 /.vscode
+*.png
+*.jpg
