@@ -112,11 +112,9 @@ def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, 
         img = np.transpose(img, (1, 2, 0))
         img = np.clip(img, 0.0, 1.0)
         img = (img * 255).astype(np.uint8)
-        '''grid = torchvision.utils.make_grid(torch.from_numpy(img).permute(2, 0, 1), normalize=True)
-        wandb.log(
-            {f"sample_epoch_{epoch}": [wandb.Image(grid, caption=f"Epoch {epoch}")]},
-            step=global_step
-        )'''
+        '''# convert to float in [0,1]
+        tensor = torch.from_numpy(img).permute(2,0,1).float().div(255.0)
+        torchvision.utils.save_image(tensor, img_path)'''
         image = wandb.Image(img, caption=f"sample_epoch_{epoch}")
 
 
