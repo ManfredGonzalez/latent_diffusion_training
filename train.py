@@ -115,8 +115,9 @@ def main():
 
     # Optimizer
     optimizer = torch.optim.AdamW(diffusion_model.parameters(), lr=args.lr)
+    total_steps = args.epochs * len(loader)
     # Cosine Annealing LR Scheduler
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
+    scheduler = CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-6)
 
     mse_loss = torch.nn.MSELoss()
 
