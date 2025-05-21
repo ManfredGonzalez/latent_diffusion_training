@@ -107,7 +107,7 @@ def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, 
             latents = sampler_i.step(timestep, latents, model_output)
 
         # Decode & log
-        decoded, _, _ = vae.decoder(latents)
+        decoded = vae.decoder(latents)
         img = decoded.squeeze(0).cpu().numpy()
         img = np.transpose(img, (1, 2, 0))
         img = np.clip(img, 0.0, 1.0)
