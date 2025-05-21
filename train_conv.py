@@ -259,13 +259,18 @@ def main():
             }, step=global_step)
         # — now update sampling weights for next epoch —
         # build a tensor of per-t average total loss
-        avg_tot_losses = torch.tensor(
-            [ np.mean(loss_tot_by_t[t]) for t in range(T) ],
-            dtype=torch.float32,
-            device=device
-        )
-        # avoid zero mass
+        # fall back to the epoch‐wide average loss if a t was never sampled
+        default = avg_loss  # global avg loss over all batches this epoch
+        means = []
+        for t in range(T):
+            vals = loss_tot_by_t.get(t, [])
+            if vals:
+                means.append(np.mean(vals))
+            else:
+                means.append(default)
+        avg_tot_losses = torch.tensor(means, dtype=torch.float32, device=device)
         avg_tot_losses = avg_tot_losses + 1e-13
+        # normalize to sum to 1
         weights = avg_tot_losses / avg_tot_losses.sum()
         # checkpointing & early-stopping
         if avg_loss + es_min_delta < best_loss:
