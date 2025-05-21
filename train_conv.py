@@ -162,6 +162,8 @@ def main():
     for epoch in range(1, args.epochs + 1):
         diffusion_model.train()
         epoch_losses = []
+        epoch_losses_gen = []
+        epoch_losses_vis = []
 
         # per-timestep accumulators
         loss_gen_by_t = defaultdict(list)
@@ -215,20 +217,24 @@ def main():
 
                 # log batch metrics
                 global_step += 1
-                if args.do_wandb:
+                '''if args.do_wandb:
                     wandb.log({
                         "train/batch_loss_total":   loss.item(),
                         "train/batch_loss_gen":     loss_generation.item(),
                         "train/batch_loss_visual":  loss_visual.item(),
                         "train/lr":                 optimizer.param_groups[0]['lr']
-                    }, step=global_step)
+                    }, step=global_step)'''
 
                 epoch_losses.append(loss.item())
+                epoch_losses_gen.append(loss_generation.item())
+                epoch_losses_vis.append(loss_visual.item())
                 pbar.set_postfix(loss=loss.item())
                 pbar.update(1)
 
         # end of epoch
         avg_loss = np.mean(epoch_losses)
+        avg_loss_gen = np.mean(epoch_losses_gen)
+        avg_loss_vis = np.mean(epoch_losses_vis)
         std_loss = np.std(epoch_losses)
         print(f"Epoch {epoch}/{args.epochs} — Avg Loss: {avg_loss:.4f} ± {std_loss:.4f}")
 
@@ -240,6 +246,8 @@ def main():
 
             wandb.log({
                 "train/epoch_loss":    avg_loss,
+                "train/epoch_loss_gen":avg_loss_gen,
+                "train/epoch_loss_vis":avg_loss_vis,
                 "train/epoch_loss_std":std_loss,
                 "train/epoch_lr":      optimizer.param_groups[0]['lr'],
                 "epoch":               epoch
