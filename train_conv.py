@@ -93,7 +93,8 @@ def sample_i(h,w, vae, diffusion_model, generator, epoch, global_step,device,see
         timesteps = tqdm(sampler_i.timesteps)
         for i, timestep in enumerate(timesteps):
             # get model’s predicted noise
-            time_embedding = get_time_embedding(timestep).to(device)
+            t = torch.tensor([int(timestep)], dtype=torch.long, device=device)
+            time_embedding = get_time_embedding(t).to(device)
             # (Batch_Size, 4, Latents_Height, Latents_Width)
             model_input = latents
 
