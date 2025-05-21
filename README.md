@@ -18,6 +18,7 @@ pip3 install torch torchvision torchaudio --index-url https://download.pytorch.o
 ```bash
 pip install opencv-python
 pip install wandb
+pip install wandb[media]
 ```
 ## Steps to clone this repo:
 
