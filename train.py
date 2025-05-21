@@ -7,22 +7,24 @@ from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from Dataset import PineappleDataset
 from diffusion import Diffusion
 from ddpm import DDPMSampler
 import wandb
 import numpy as np
-#get the current working directory
+
+# get the current working directory
 current_dir = os.getcwd()
-path_to_add = os.path.join(current_dir,"VAE_training")
+path_to_add = os.path.join(current_dir, "VAE_training")
 # check if the path is already in sys.path
 if path_to_add not in sys.path:
     sys.path.append(path_to_add)
 
 from VAE_training.VAE import VAE
 
-def setup_wandb(lr,epochs,batch_size):
+def setup_wandb(lr, epochs, batch_size):
     """Login to Weights & Biases and initialize a new run."""
     api_key = os.getenv("WANDB_API_KEY")
     wandb.login(key=api_key)
@@ -35,10 +37,12 @@ def setup_wandb(lr,epochs,batch_size):
             "dataset": "Pineapples",
             "epochs": epochs,
             "batch_size": batch_size,
-            "optimizer": "Adam"
+            "optimizer": "AdamW",
+            "scheduler": "CosineAnnealingLR"
         },
     )
     return run
+
 def get_time_embedding(timesteps: torch.LongTensor, dim: int = 160):
     """
     Create sinusoidal time embeddings for a batch of timesteps.
@@ -69,7 +73,7 @@ def parse_args():
     parser.add_argument("--chkps_logging_path", type=str, default="checkpoints/diffusion/betaKL@1.0/",
                         help="Directory to save checkpoint files")
     parser.add_argument("--vae_chkp", type=str, default="checkpoints/vae/betaKL@1.0/weights_ck_398.pt",
-                        help="Directory to save checkpoint files")
+                        help="Path to pretrained VAE checkpoint")
     parser.add_argument("--epochs", type=int, default=50,
                         help="Number of training epochs")
     parser.add_argument("--patience", type=int, default=-1,
@@ -81,7 +85,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    setup_wandb(args.lr,args.epochs,args.batch_size)
+    setup_wandb(args.lr, args.epochs, args.batch_size)
     os.makedirs(args.chkps_logging_path, exist_ok=True)
 
     # Dataset & DataLoader
@@ -111,6 +115,9 @@ def main():
 
     # Optimizer
     optimizer = torch.optim.AdamW(diffusion_model.parameters(), lr=args.lr)
+    # Cosine Annealing LR Scheduler
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
+
     mse_loss = torch.nn.MSELoss()
 
     T = sampler.num_train_timesteps
@@ -136,7 +143,7 @@ def main():
 
                 # 2. Sample per-sample timesteps and add noise
                 t = torch.randint(0, T, (b,), device=device)
-                noisy_lat,actual_noise = sampler.add_noise(latent, t)
+                noisy_lat, actual_noise = sampler.add_noise(latent, t)
 
                 # 3. Time embedding and prediction
                 t_emb = get_time_embedding(t).to(device)           # (B, 320)
@@ -147,8 +154,9 @@ def main():
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+                scheduler.step()  # update learning rate per batch
 
-                # 1) Log the batch loss
+                # Log batch loss and LR
                 global_step += 1
                 wandb.log(
                     {
@@ -160,14 +168,20 @@ def main():
 
                 epoch_loss += loss.item()
                 epoch_losses.append(loss.item())
-                pbar.set_postfix(loss=loss.item())
+                pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
                 pbar.update(1)
 
         avg_loss = epoch_loss / len(loader)
         epoch_loss_std = np.std(epoch_losses)
         print(f"Epoch {epoch}/{args.epochs} — Avg Loss: {avg_loss:.4f} ± {epoch_loss_std:.4f}")
-        wandb.log({"train/epoch_loss": avg_loss, "epoch": epoch}, step=global_step)
-        wandb.log({"train/epoch_loss_std": epoch_loss_std, "epoch": epoch}, step=global_step)
+        # Log epoch metrics
+        wandb.log({
+            "train/epoch_loss": avg_loss,
+            "train/epoch_loss_std": epoch_loss_std,
+            "train/epoch_lr": optimizer.param_groups[0]['lr'],
+            "epoch": epoch
+        }, step=global_step)
+
         # Check for improvement
         if avg_loss + es_min_delta < best_loss:
             best_loss = avg_loss
@@ -182,11 +196,10 @@ def main():
             epochs_no_improve += 1
             print(f"  ↳ No improvement for {epochs_no_improve} epoch(s)")
 
-        if args.patience != -1:
-            # Early stopping
-            if epochs_no_improve >= args.patience:
-                print(f"Stopping early after {epoch} epochs (patience {args.patience})")
-                break
+        if args.patience != -1 and epochs_no_improve >= args.patience:
+            print(f"Stopping early after {epoch} epochs (patience {args.patience})")
+            break
+
     # Final save
     final_chkpt_path = os.path.join(
         args.chkps_logging_path,

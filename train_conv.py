@@ -7,6 +7,7 @@ from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from Dataset import PineappleDataset
 from diffusion_conv import Diffusion
@@ -114,6 +115,9 @@ def main():
 
     # Optimizer
     optimizer = torch.optim.AdamW(diffusion_model.parameters(), lr=args.lr)
+    # Cosine Annealing LR Scheduler
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
+    
     mse_loss = torch.nn.MSELoss()
 
     T = sampler.num_train_timesteps
@@ -150,7 +154,7 @@ def main():
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-
+                scheduler.step()  
                 # 1) Log the batch loss
                 global_step += 1
                 if args.do_wandb:
@@ -170,9 +174,12 @@ def main():
         avg_loss = epoch_loss / len(loader)
         epoch_loss_std = np.std(epoch_losses)
         print(f"Epoch {epoch}/{args.epochs} — Avg Loss: {avg_loss:.4f} ± {epoch_loss_std:.4f}")
-        if args.do_wandb:
-            wandb.log({"train/epoch_loss": avg_loss, "epoch": epoch}, step=global_step)
-            wandb.log({"train/epoch_loss_std": epoch_loss_std, "epoch": epoch}, step=global_step)
+        wandb.log({
+            "train/epoch_loss": avg_loss,
+            "train/epoch_loss_std": epoch_loss_std,
+            "train/epoch_lr": optimizer.param_groups[0]['lr'],
+            "epoch": epoch
+        }, step=global_step)
         # Check for improvement
         if avg_loss + es_min_delta < best_loss:
             best_loss = avg_loss
