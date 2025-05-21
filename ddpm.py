@@ -117,7 +117,7 @@ class DDPMSampler:
         noise = torch.randn(original_samples.shape, generator=self.generator, device=original_samples.device, dtype=original_samples.dtype)
         noisy_samples = sqrt_alpha_prod * original_samples + sqrt_one_minus_alpha_prod * noise
         #actual_noise = (noisy_samples - (sqrt_alpha_prod * original_samples)) / sqrt_one_minus_alpha_prod
-        return noisy_samples,noise
+        return noisy_samples,noise,sqrt_alpha_prod,sqrt_one_minus_alpha_prod
 
         
 

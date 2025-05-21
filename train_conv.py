@@ -129,6 +129,8 @@ def main():
     
     for epoch in range(1, args.epochs + 1):
         epoch_loss = 0.0
+        epoch_loss_generation = 0.0
+        epoch_loss_visual_latents = 0.0
         diffusion_model.train()
         epoch_losses = []
         with tqdm(total=len(loader), desc=f"Epoch {epoch}/{args.epochs}", unit="batch") as pbar:
@@ -144,14 +146,20 @@ def main():
 
                 # 2. Sample per-sample timesteps and add noise
                 t = torch.randint(0, T, (b,), device=device)
-                noisy_lat,actual_noise = sampler.add_noise(latent, t)
+                noisy_lat,actual_noise,sqrt_alpha_prod,sqrt_one_minus_alpha_prod = sampler.add_noise(latent, t)
 
                 # 3. Time embedding and prediction
                 t_emb = get_time_embedding(t).to(device)           # (B, 320)
                 pred_noise = diffusion_model(noisy_lat, t_emb)
 
+                noisy_samples = sqrt_alpha_prod * latent + sqrt_one_minus_alpha_prod * pred_noise
+                actual_noise_predicted = (noisy_samples - (sqrt_alpha_prod * latent)) / sqrt_one_minus_alpha_prod
+                cleaned_latents_approximation = noisy_lat - actual_noise_predicted
                 # 4. Loss & backward
-                loss = mse_loss(pred_noise, actual_noise)
+                loss_generation = mse_loss(pred_noise, actual_noise)
+                loss_visual_latents = mse_loss(cleaned_latents_approximation, latent)
+
+                loss = loss_generation + loss_visual_latents
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -162,6 +170,8 @@ def main():
                     wandb.log(
                         {
                             "train/batch_loss": loss.item(),
+                            "train/batch_loss_generation": loss_generation.item(),
+                            "train/batch_loss_visual_latents": loss_visual_latents.item(),
                             "train/learning_rate": optimizer.param_groups[0]['lr']
                         },
                         step=global_step
@@ -169,14 +179,20 @@ def main():
                 loss_num = loss.item()
                 epoch_losses.append(loss_num)
                 epoch_loss += loss_num
+                epoch_loss_generation += loss_generation.item()
+                epoch_loss_visual_latents += loss_visual_latents.item()
                 pbar.set_postfix(loss=loss.item())
                 pbar.update(1)
         
         avg_loss = epoch_loss / len(loader)
+        avg_loss_generation = epoch_loss_generation / len(loader)
+        avg_loss_visual_latents = epoch_loss_visual_latents / len(loader)
         epoch_loss_std = np.std(epoch_losses)
         print(f"Epoch {epoch}/{args.epochs} — Avg Loss: {avg_loss:.4f} ± {epoch_loss_std:.4f}")
         wandb.log({
             "train/epoch_loss": avg_loss,
+            "train/epoch_loss_generation": avg_loss_generation,
+            "train/epoch_loss_visual_latents": avg_loss_visual_latents,
             "train/epoch_loss_std": epoch_loss_std,
             "train/epoch_lr": optimizer.param_groups[0]['lr'],
             "epoch": epoch
