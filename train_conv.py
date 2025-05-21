@@ -154,6 +154,8 @@ def main():
     scheduler = CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-6)
 
     T = sampler.num_train_timesteps
+    # initialize uniform weights
+    w = torch.ones(T, dtype=torch.float32, device=device) / T
     global_step = 0
     best_loss = float('inf')
     epochs_no_improve = 0
@@ -182,7 +184,10 @@ def main():
                     latent = latent.detach()
 
                 # 2. Sample t & add noise
-                t = torch.randint(0, T, (b,), device=device)
+                #t = torch.randint(0, T, (b,), device=device)
+                #    draw b indices from [0..T-1] with prob ∝ w
+                t = torch.multinomial(w, num_samples=b, replacement=True).to(device)
+
                 noisy_lat, actual_noise, sqrt_alpha_prod, sqrt_one_minus_alpha_prod = sampler.add_noise(latent, t)
 
                 # 3. Time embed & predict
@@ -252,7 +257,16 @@ def main():
                 "train/epoch_lr":      optimizer.param_groups[0]['lr'],
                 "epoch":               epoch
             }, step=global_step)
-
+        # — now update sampling weights for next epoch —
+        # build a tensor of per-t average total loss
+        avg_tot_losses = torch.tensor(
+            [ np.mean(loss_tot_by_t[t]) for t in range(T) ],
+            dtype=torch.float32,
+            device=device
+        )
+        # avoid zero mass
+        avg_tot_losses = avg_tot_losses + 1e-13
+        w = avg_tot_losses / avg_tot_losses.sum()
         # checkpointing & early-stopping
         if avg_loss + es_min_delta < best_loss:
             best_loss = avg_loss
