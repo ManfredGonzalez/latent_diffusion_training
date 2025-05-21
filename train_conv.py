@@ -75,6 +75,8 @@ def parse_args():
                         help="Number of training epochs")
     parser.add_argument("--patience", type=int, default=-1,
                         help="Early stopping patience in epochs")
+    parser.add_argument("--rec_importance", type=int, default=1,
+                        help="Reconstruction importance in loss")
     parser.add_argument("--es_min_delta", type=float, default=0.0,
                         help="Early stopping delta in epochs")
     parser.add_argument("--do_wandb", action="store_true",default=True,
@@ -159,7 +161,7 @@ def main():
                 loss_generation = mse_loss(pred_noise, actual_noise)
                 loss_visual_latents = mse_loss(cleaned_latents_approximation, latent)
 
-                loss = loss_generation + loss_visual_latents
+                loss = loss_generation + (loss_visual_latents * args.rec_importance)
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -203,7 +205,7 @@ def main():
             epochs_no_improve = 0
             chkpt_path = os.path.join(
                 args.chkps_logging_path,
-                f"diffusion_best_epoch{epoch}_loss{avg_loss:.4f}.pt"
+                f"diffusion_best_epoch{epoch}_loss{avg_loss:.4f}_{args.rec_importance}.pt"
             )
             torch.save(diffusion_model.state_dict(), chkpt_path)
             print(f"  ↳ New best model saved to {chkpt_path}")
@@ -219,7 +221,7 @@ def main():
     # final save
     final_chkpt_path = os.path.join(
         args.chkps_logging_path,
-        f"diffusion_final_epoch{epoch}_loss{avg_loss:.4f}.pt"
+        f"diffusion_final_epoch{epoch}_loss{avg_loss:.4f}_{args.rec_importance}.pt"
     )
     torch.save(diffusion_model.state_dict(), final_chkpt_path)
     print(f"Final model saved to {final_chkpt_path}")
