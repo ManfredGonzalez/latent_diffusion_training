@@ -107,7 +107,7 @@ def sample_i(h,w, vae, diffusion_model, generator, epoch, global_step,device,see
 
 
         # (4) Decode back to pixels via your VAE
-        reconstructed_image, _,_ = vae.decoder(latents)  
+        reconstructed_image = vae.decoder(latents)  
         reconstructed_image = reconstructed_image.squeeze(0).cpu.numpy()
         reconstructed_image = np.transpose(reconstructed_image, (1, 2, 0)) # -> (H, W, 3)
         reconstructed_image - np.clip(reconstructed_image, 0.0, 1.0)
