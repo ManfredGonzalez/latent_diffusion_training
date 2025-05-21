@@ -117,14 +117,10 @@ def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, 
             {f"sample_epoch_{epoch}": [wandb.Image(grid, caption=f"Epoch {epoch}")]},
             step=global_step
         )'''
-        '''image = wandb.Image(img, caption=f"sample_epoch_{epoch}")
+        image = wandb.Image(img, caption=f"sample_epoch_{epoch}")
 
 
-        wandb.log({"examples": image})'''
-        # save the image to a file in the root directory
-        img_path = os.path.join("sample_images", f"sample_epoch_{epoch}.png")
-        os.makedirs(os.path.dirname(img_path), exist_ok=True)
-        torchvision.utils.save_image(torch.from_numpy(img).permute(2, 0, 1), img_path)
+        wandb.log({"examples": image})
 
         
 
