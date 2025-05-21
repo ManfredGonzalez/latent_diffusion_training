@@ -155,7 +155,7 @@ def main():
 
     T = sampler.num_train_timesteps
     # initialize uniform weights
-    w = torch.ones(T, dtype=torch.float32, device=device) / T
+    weights = torch.ones(T, dtype=torch.float32, device=device) / T
     global_step = 0
     best_loss = float('inf')
     epochs_no_improve = 0
@@ -186,7 +186,7 @@ def main():
                 # 2. Sample t & add noise
                 #t = torch.randint(0, T, (b,), device=device)
                 #    draw b indices from [0..T-1] with prob ∝ w
-                t = torch.multinomial(w, num_samples=b, replacement=True).to(device)
+                t = torch.multinomial(weights, num_samples=b, replacement=True).to(device)
 
                 noisy_lat, actual_noise, sqrt_alpha_prod, sqrt_one_minus_alpha_prod = sampler.add_noise(latent, t)
 
@@ -266,7 +266,7 @@ def main():
         )
         # avoid zero mass
         avg_tot_losses = avg_tot_losses + 1e-13
-        w = avg_tot_losses / avg_tot_losses.sum()
+        weights = avg_tot_losses / avg_tot_losses.sum()
         # checkpointing & early-stopping
         if avg_loss + es_min_delta < best_loss:
             best_loss = avg_loss
