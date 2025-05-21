@@ -3,7 +3,7 @@ import os
 import sys
 import math
 from tqdm import tqdm
-
+import torchvision
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -83,6 +83,41 @@ def parse_args():
                         help="Enable Weights & Biases logging")
     return parser.parse_args()
 
+def sample_i(h,w, vae, diffusion_model, generator, epoch, global_step,device,seed):
+    generator.manual_seed(seed)
+    sampler_i = DDPMSampler(generator)
+    sampler_i.set_inference_timesteps(1000)
+    with torch.no_grad():
+        # (1) Prepare pure‐noise latents
+        latents = torch.randn((1, 4, h//8, w//8), device=device)
+        timesteps = tqdm(sampler_i.timesteps)
+        for i, timestep in enumerate(timesteps):
+            # get model’s predicted noise
+            time_embedding = get_time_embedding(timestep).to(device)
+            # (Batch_Size, 4, Latents_Height, Latents_Width)
+            model_input = latents
+
+            # model_output is the predicted noise
+            # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 4, Latents_Height, Latents_Width)
+            model_output = diffusion_model(model_input, time_embedding)
+
+            # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 4, Latents_Height, Latents_Width)
+            latents = sampler_i.step(timestep, latents, model_output)
+
+
+        # (4) Decode back to pixels via your VAE
+        reconstructed_image, _,_ = vae.decoder(latents)  
+        reconstructed_image = reconstructed_image.squeeze(0).cpu.numpy()
+        reconstructed_image = np.transpose(reconstructed_image, (1, 2, 0)) # -> (H, W, 3)
+        reconstructed_image - np.clip(reconstructed_image, 0.0, 1.0)
+        reconstructed_image = (reconstructed_image * 255).astype(np.uint8)
+
+        # (5) Make a grid & log
+        grid = torchvision.utils.make_grid(reconstructed_image, normalize=True)
+        wandb.log(
+            {f"sample_epoch_{epoch}": [wandb.Image(grid, caption=f"Epoch {epoch}")]},
+            step=global_step
+        )
 
 def main():
     args = parse_args()
@@ -209,6 +244,12 @@ def main():
             )
             torch.save(diffusion_model.state_dict(), chkpt_path)
             print(f"  ↳ New best model saved to {chkpt_path}")
+            if args.do_wandb:
+                # Log a sample image
+                print("Logging sample image...")
+                diffusion_model.eval()
+                sample_i(h, w, vae, diffusion_model, torch.Generator(device=device), epoch, global_step, device,seed=42)
+                diffusion_model.train()
         else:
             epochs_no_improve += 1
             print(f"  ↳ No improvement for {epochs_no_improve} epoch(s)")
@@ -225,6 +266,12 @@ def main():
     )
     torch.save(diffusion_model.state_dict(), final_chkpt_path)
     print(f"Final model saved to {final_chkpt_path}")
+    if args.do_wandb:
+        # Log a sample image
+        print("Logging sample image...")
+        diffusion_model.eval()
+        sample_i(h, w, vae, diffusion_model, torch.Generator(device=device), epoch, global_step, device,seed=42)
+        diffusion_model.train()
     print("Training complete.")
 
 
