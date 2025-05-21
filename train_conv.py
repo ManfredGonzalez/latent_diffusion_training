@@ -155,14 +155,12 @@ def main():
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                scheduler.step()  
                 # 1) Log the batch loss
                 global_step += 1
                 if args.do_wandb:
                     wandb.log(
                         {
-                            "train/batch_loss": loss.item(),
-                            "train/learning_rate": optimizer.param_groups[0]['lr'],
+                            "train/batch_loss": loss.item()
                         },
                         step=global_step
                     )
@@ -171,7 +169,7 @@ def main():
                 epoch_loss += loss_num
                 pbar.set_postfix(loss=loss.item())
                 pbar.update(1)
-
+        scheduler.step()  
         avg_loss = epoch_loss / len(loader)
         epoch_loss_std = np.std(epoch_losses)
         print(f"Epoch {epoch}/{args.epochs} — Avg Loss: {avg_loss:.4f} ± {epoch_loss_std:.4f}")
