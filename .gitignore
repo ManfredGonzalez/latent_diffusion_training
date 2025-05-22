@@ -22,3 +22,4 @@ recontructed_image.pdf
 *.png
 *.jpg
 /sample_images
+*.json
