@@ -79,13 +79,13 @@ def parse_args():
                         help="Reconstruction importance in loss")
     parser.add_argument("--es_min_delta", type=float, default=0.0,
                         help="Early stopping delta")
-    parser.add_argument("--do_wandb", action="store_true", default=True,
+    parser.add_argument("--do_wandb", action="store_true", default=False,
                         help="Enable Weights & Biases logging")
-    parser.add_argument("--constant_lr", action="store_false", default=False,
+    parser.add_argument("--constant_lr", action="store_false", default=True,
                         help="Enable Learning rate decay")
-    parser.add_argument("--non-uniform_sampling", action="store_true", default=True,
+    parser.add_argument("--non-uniform_sampling", action="store_true", default=False,
                         help="Enable non-uniform sampling")
-    parser.add_argument("--attention", action="store_false", default=False,
+    parser.add_argument("--attention", action="store_false", default=True,
                         help="Use attention in the diffusion model")
     parser.add_argument("--run_name", type=str, default=None,
                         help="W&B run name (optional)")
