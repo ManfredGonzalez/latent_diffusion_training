@@ -1,36 +1,47 @@
-from torch.utils.data import Dataset, DataLoader
 import glob
 import cv2
 import numpy as np
-
+from torch.utils.data import Dataset
+from PIL import Image
+import torch
 class PineappleDataset(Dataset):
-    def __init__(self, train=True, train_ratio=0.8, dataset_path="./FULL_VERTICAL_PINEAPPLE/FULL_UNIFIED/*"):
-        # Get all images sorted from the specified folder.
+    def __init__(
+        self,
+        train: bool = True,
+        train_ratio: float = 0.8,
+        dataset_path: str = "./FULL_VERTICAL_PINEAPPLE/FULL_UNIFIED/*",
+        transform=None,            # ← new
+    ):
         self.all_images = sorted(glob.glob(dataset_path))
-        # Calculate the index at which to split the dataset.
         split_index = int(len(self.all_images) * train_ratio)
-        # Partition the images based on the 'train' flag.
-        if train:
-            self.images = self.all_images[:split_index]
-        else:
-            self.images = self.all_images[split_index:]
+        self.images = (
+            self.all_images[:split_index] if train
+            else self.all_images[split_index:]
+        )
         self.resize_shape = (256, 256)
+        self.transform = transform  # ← store it
 
     def __len__(self):
         return len(self.images)
 
-    def transform_image(self, image_path):
-        image = cv2.imread(image_path, cv2.IMREAD_COLOR)
-        channels = 3
-        # Resize the image.
-        image = cv2.resize(image, dsize=(self.resize_shape[1], self.resize_shape[0]))
-        # Convert to float32 and normalize.
-        image = np.array(image).reshape((image.shape[0], image.shape[1], channels)).astype(np.float32) / 255.0
-        # Rearrange the dimensions to (channels, height, width).
-        image = np.transpose(image, (2, 0, 1))
-        return image
-
     def __getitem__(self, idx):
-        image = self.transform_image(self.images[idx])
-        sample = {'image': image, 'idx': idx}
-        return sample
+        # 1. load + resize + to numpy H×W×C float32 [0–1]
+        img = cv2.imread(self.images[idx], cv2.IMREAD_COLOR)
+        img = cv2.resize(img, (self.resize_shape[1], self.resize_shape[0]))
+        img = img.astype(np.float32) / 255.0
+
+        # 2. if the user passed a torchvision transform, apply it
+        if self.transform is not None:
+            # torchvision transforms expect H×W×C uint8 or PIL.Image,
+            # so convert back…
+            img = (img * 255).astype(np.uint8)
+            # H×W×C → PIL
+            
+            img = Image.fromarray(img)
+            img = self.transform(img)   # now you get a torch.Tensor C×H×W
+        else:
+            # just H×W×C→C×H×W tensor
+            
+            img = torch.from_numpy(img.transpose(2, 0, 1))
+
+        return {"image": img, "idx": idx}
