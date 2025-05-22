@@ -82,7 +82,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def log_bar(name, loss_dict, step):
+'''def log_bar(name, loss_dict, step):
     """Helper to build a W&B bar plot from timestep→[losses]."""
     table = wandb.Table(columns=["timestep", "loss"])
     for t, vals in sorted(loss_dict.items()):
@@ -91,8 +91,18 @@ def log_bar(name, loss_dict, step):
         name: wandb.plot.bar(
             table, "timestep", "loss", title=name.replace("_", " ").title()
         )
-    }, step=step)
-
+    }, step=step)'''
+def log_bar(name, loss_dict, step):
+    """Helper to build a W&B bar plot from timestep→[losses]."""
+    epoch = step
+    table = wandb.Table(columns=["epoch", "timestep", "loss"])
+    for t, vals in sorted(loss_dict.items()):
+        table.add_data(epoch, t, float(np.mean(vals)))
+    wandb.log({
+        name: wandb.plot.bar(
+            table, "timestep", "loss", title=name.replace("_", " ").title()
+        )
+    }, step=epoch)
 
 def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, seed):
     generator.manual_seed(seed)
@@ -151,7 +161,7 @@ def main():
 
     optimizer = torch.optim.AdamW(diffusion_model.parameters(), lr=args.lr)
     total_steps = args.epochs * len(loader)
-    scheduler = CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-6)
+    scheduler = CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-5)
 
     T = sampler.num_train_timesteps
     # initialize uniform weights
@@ -274,7 +284,8 @@ def main():
         weights = avg_tot_losses / avg_tot_losses.sum()
         # checkpointing & early-stopping
         if avg_loss + es_min_delta < best_loss:
-            best_loss = avg_loss
+            if epoch!= 1:
+                best_loss = avg_loss
             epochs_no_improve = 0
             ckpt_path = os.path.join(
                 args.chkps_logging_path,
