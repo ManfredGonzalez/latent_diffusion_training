@@ -27,12 +27,13 @@ if path_to_add not in sys.path:
 from VAE_training.VAE import VAE
 
 
-def setup_wandb(lr, epochs, batch_size):
+def setup_wandb(lr, epochs, batch_size,run_name):
     api_key = os.getenv("WANDB_API_KEY")
     wandb.login(key=api_key)
     run = wandb.init(
         entity="imagine-laboratory-conare",
         project="SD_training_exp1",
+        name=run_name,
         config={
             "learning_rate": lr,
             "architecture": "stable_diffusion",
@@ -86,6 +87,8 @@ def parse_args():
                         help="Enable non-uniform sampling")
     parser.add_argument("--attention", action="store_false", default=False,
                         help="Use attention in the diffusion model")
+    parser.add_argument("--run_name", type=str, default=None,
+                        help="W&B run name (optional)")
     return parser.parse_args()
 
 
@@ -143,7 +146,7 @@ def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, 
 def main():
     args = parse_args()
     if args.do_wandb:
-        setup_wandb(args.lr, args.epochs, args.batch_size)
+        setup_wandb(args.lr, args.epochs, args.batch_size, args.run_name)
     os.makedirs(args.chkps_logging_path, exist_ok=True)
 
     dataset = PineappleDataset(train=True, train_ratio=0.8, dataset_path=args.dataset_path)
