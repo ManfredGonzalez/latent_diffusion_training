@@ -13,6 +13,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from Dataset import PineappleDataset
 from diffusion_conv import Diffusion
+from diffusion import Diffusion as Diffusion_att
 from ddpm import DDPMSampler
 import wandb
 import numpy as np
@@ -79,6 +80,12 @@ def parse_args():
                         help="Early stopping delta")
     parser.add_argument("--do_wandb", action="store_true", default=True,
                         help="Enable Weights & Biases logging")
+    parser.add_argument("--constant_lr", action="store_false", default=False,
+                        help="Enable Learning rate decay")
+    parser.add_argument("--non-uniform_sampling", action="store_true", default=True,
+                        help="Enable non-uniform sampling")
+    parser.add_argument("--attention", action="store_false", default=False,
+                        help="Use attention in the diffusion model")
     return parser.parse_args()
 
 
@@ -155,17 +162,23 @@ def main():
     for p in vae.parameters():
         p.requires_grad = False
 
-    diffusion_model = Diffusion().to(device)
+    if args.attention:
+        # Use attention in the diffusion model
+        diffusion_model = Diffusion_att().to(device)
+    else:
+        diffusion_model = Diffusion().to(device)
     sampler = DDPMSampler(generator=torch.Generator(device=device),
                           num_training_steps=1000)
 
     optimizer = torch.optim.AdamW(diffusion_model.parameters(), lr=args.lr)
     total_steps = args.epochs * len(loader)
-    scheduler = CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-5)
+    if not args.constant_lr:
+        scheduler = CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-5)
 
     T = sampler.num_train_timesteps
     # initialize uniform weights
-    weights = torch.ones(T, dtype=torch.float32, device=device) / T
+    if args.non_uniform_sampling:
+        weights = torch.ones(T, dtype=torch.float32, device=device) / T
     global_step = 0
     best_loss = float('inf')
     epochs_no_improve = 0
@@ -194,9 +207,11 @@ def main():
                     latent = latent.detach()
 
                 # 2. Sample t & add noise
-                #t = torch.randint(0, T, (b,), device=device)
-                #    draw b indices from [0..T-1] with prob ∝ w
-                t = torch.multinomial(weights, num_samples=b, replacement=True).to(device)
+                if not args.non_uniform_sampling:
+                    t = torch.randint(0, T, (b,), device=device)
+                else:
+                    #    draw b indices from [0..T-1] with prob ∝ w
+                    t = torch.multinomial(weights, num_samples=b, replacement=True).to(device)
 
                 noisy_lat, actual_noise, sqrt_alpha_prod, sqrt_one_minus_alpha_prod = sampler.add_noise(latent, t)
 
@@ -221,7 +236,8 @@ def main():
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                scheduler.step()
+                if not args.constant_lr:
+                    scheduler.step()
 
                 # accumulate for bar plots
                 for ti, lg, lv, lt in zip(t.tolist(), per_gen.tolist(),
@@ -267,21 +283,22 @@ def main():
                 "train/epoch_lr":      optimizer.param_groups[0]['lr'],
                 "epoch":               epoch
             }, step=global_step)
-        # — now update sampling weights for next epoch —
-        # build a tensor of per-t average total loss
-        # fall back to the epoch‐wide average loss if a t was never sampled
-        default = avg_loss  # global avg loss over all batches this epoch
-        means = []
-        for t in range(T):
-            vals = loss_tot_by_t.get(t, [])
-            if vals:
-                means.append(np.mean(vals))
-            else:
-                means.append(default)
-        avg_tot_losses = torch.tensor(means, dtype=torch.float32, device=device)
-        avg_tot_losses = avg_tot_losses + 1e-13
-        # normalize to sum to 1
-        weights = avg_tot_losses / avg_tot_losses.sum()
+        if args.non_uniform_sampling:
+            # — now update sampling weights for next epoch —
+            # build a tensor of per-t average total loss
+            # fall back to the epoch‐wide average loss if a t was never sampled
+            default = avg_loss  # global avg loss over all batches this epoch
+            means = []
+            for t in range(T):
+                vals = loss_tot_by_t.get(t, [])
+                if vals:
+                    means.append(np.mean(vals))
+                else:
+                    means.append(default)
+            avg_tot_losses = torch.tensor(means, dtype=torch.float32, device=device)
+            avg_tot_losses = avg_tot_losses + 1e-13
+            # normalize to sum to 1
+            weights = avg_tot_losses / avg_tot_losses.sum()
         # checkpointing & early-stopping
         if avg_loss + es_min_delta < best_loss:
             if epoch!= 1:
