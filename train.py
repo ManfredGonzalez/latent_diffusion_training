@@ -5,7 +5,7 @@ import math
 from collections import defaultdict
 
 from tqdm import tqdm
-import torchvision
+import torchvision.transforms as Transforms
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -89,6 +89,12 @@ def parse_args():
                         help="Use attention in the diffusion model")
     parser.add_argument("--run_name", type=str, default=None,
                         help="W&B run name (optional)")
+    parser.add_argument(
+                        "--augment",
+                        action="store_true",
+                        default=False,
+                        help="Enable random left/right flips on the images"
+                    )
     return parser.parse_args()
 
 
@@ -148,8 +154,21 @@ def main():
     if args.do_wandb:
         setup_wandb(args.lr, args.epochs, args.batch_size, args.run_name)
     os.makedirs(args.chkps_logging_path, exist_ok=True)
-
-    dataset = PineappleDataset(train=True, train_ratio=0.8, dataset_path=args.dataset_path)
+    if args.augment:
+        # e.g. flip 50% / rot ±30°
+        augment_transforms = Transforms.Compose([
+            Transforms.RandomHorizontalFlip(p=0.5),
+            Transforms.RandomRotation(degrees=90),
+            Transforms.ToTensor(),    # converts PIL→Tensor C×H×W, and scales [0–255]→[0–1]
+        ])
+        dataset = PineappleDataset(
+            train=True,
+            train_ratio=0.8,
+            dataset_path=args.dataset_path,
+            transform=augment_transforms
+        )
+    else:
+        dataset = PineappleDataset(train=True, train_ratio=0.8, dataset_path=args.dataset_path)
     loader = DataLoader(dataset,
                         batch_size=args.batch_size,
                         shuffle=True,
