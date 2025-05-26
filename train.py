@@ -181,6 +181,19 @@ def main():
     ckpt = torch.load(args.vae_chkp, map_location=device)
     vae.load_state_dict(ckpt)
     vae.eval()
+    # ─── 0) Grab one batch to estimate μ̂ and σ̂ ───────────────────────────────────────────
+    first_batch = next(iter(loader))
+    imgs0 = first_batch['image'].to(device)
+    with torch.no_grad():
+        b0, _, h0, w0 = imgs0.shape
+        noise0 = torch.randn((b0, 4, h0 // 8, w0 // 8), device=device)
+        latent0, _, _ = vae.encoder(imgs0, noise0)   # latent0 shape: (b0, C, H, W)
+
+    # compute per-channel mean and std over batch+spatial dims
+    # keepdim so we can broadcast directly later
+    mu_latent    = latent0.mean()         # scalar
+    sigma_latent = latent0.std(unbiased=False)  # scalar
+
     for p in vae.parameters():
         p.requires_grad = False
 
@@ -226,6 +239,8 @@ def main():
                     b, _, h, w = imgs.shape
                     noise_vae = torch.randn((b, 4, h // 8, w // 8), device=device)
                     latent, mu, logvar = vae.encoder(imgs, noise_vae)
+                    # apply *fixed* scaling exactly as in the paper:
+                    latent = latent / sigma_latent
                     latent = latent.detach()
 
                 # 2. Sample t & add noise
