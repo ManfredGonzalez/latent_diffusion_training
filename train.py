@@ -120,7 +120,7 @@ def log_bar(name, loss_dict, step):
         )
     }, step=epoch)
 
-def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, seed):
+def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, seed,sigma_latent):
     generator.manual_seed(seed)
     sampler_i = DDPMSampler(generator)
     sampler_i.set_inference_timesteps(1000)
@@ -131,7 +131,8 @@ def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, 
             time_embedding = get_time_embedding(t).to(device)
             model_output = diffusion_model(latents, time_embedding)
             latents = sampler_i.step(timestep, latents, model_output)
-
+        
+        latents = latents*sigma_latent
         # Decode & log
         decoded = vae.decoder(latents)
         img = decoded.squeeze(0).cpu().numpy()
@@ -193,7 +194,14 @@ def main():
     # keepdim so we can broadcast directly later
     mu_latent    = latent0.mean()         # scalar
     sigma_latent = latent0.std(unbiased=False)  # scalar
+    sigma_val = sigma_latent.item()   # convert 0-dim tensor → Python float
 
+    # pick a path to save it
+    sigma_path = os.path.join(args.chkps_logging_path, "sigma_latent.txt")
+
+    # write it
+    with open(sigma_path, "w") as f:
+        f.write(f"{sigma_val:.12g}")   # or just str(sigma_val)
     for p in vae.parameters():
         p.requires_grad = False
 
@@ -352,7 +360,7 @@ def main():
                 diffusion_model.eval()
                 sample_i(h, w, vae, diffusion_model,
                          torch.Generator(device=device),
-                         epoch, global_step, device, seed=42)
+                         epoch, global_step, device, seed=42,sigma_latent=sigma_latent)
                 diffusion_model.train()
         else:
             epochs_no_improve += 1
