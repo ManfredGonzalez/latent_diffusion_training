@@ -272,11 +272,12 @@ def main():
                 per_gen = F.mse_loss(pred_noise, actual_noise, reduction="none").mean(dim=[1,2,3])
                 per_vis = F.mse_loss(noisy_lat - actual_noise_pred, latent, reduction="none").mean(dim=[1,2,3])
                 per_tot = per_gen + args.rec_importance * per_vis
+                #per_tot = per_gen
 
                 # batch-level loss
                 loss_generation = per_gen.mean()
                 loss_visual    = per_vis.mean()
-                loss           = per_tot.mean()
+                loss           = per_gen.mean()#per_tot.mean()
 
                 optimizer.zero_grad()
                 loss.backward()
