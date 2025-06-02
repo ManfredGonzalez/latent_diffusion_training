@@ -2,9 +2,12 @@ import argparse
 import os
 import sys
 import math
+import glob
+import re
 from collections import defaultdict
 
 from tqdm import tqdm
+import torchvision
 import torchvision.transforms as Transforms
 import torch
 import torch.nn.functional as F
@@ -98,16 +101,6 @@ def parse_args():
     return parser.parse_args()
 
 
-'''def log_bar(name, loss_dict, step):
-    """Helper to build a W&B bar plot from timestep→[losses]."""
-    table = wandb.Table(columns=["timestep", "loss"])
-    for t, vals in sorted(loss_dict.items()):
-        table.add_data(t, float(np.mean(vals)))
-    wandb.log({
-        name: wandb.plot.bar(
-            table, "timestep", "loss", title=name.replace("_", " ").title()
-        )
-    }, step=step)'''
 def log_bar(name, loss_dict, step):
     """Helper to build a W&B bar plot from timestep→[losses]."""
     epoch = step
@@ -120,7 +113,8 @@ def log_bar(name, loss_dict, step):
         )
     }, step=epoch)
 
-def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, seed,sigma_latent):
+
+def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, seed,sigma_latent, wandb=True,num_image=None):
     generator.manual_seed(seed)
     sampler_i = DDPMSampler(generator)
     sampler_i.set_inference_timesteps(1000)
@@ -132,22 +126,20 @@ def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, 
             model_output = diffusion_model(latents, time_embedding)
             latents = sampler_i.step(timestep, latents, model_output)
         
-        latents = latents*sigma_latent
+        latents = latents * sigma_latent
         # Decode & log
         decoded = vae.decoder(latents)
         img = decoded.squeeze(0).cpu().numpy()
         img = np.transpose(img, (1, 2, 0))
         img = np.clip(img, 0.0, 1.0)
         img = (img * 255).astype(np.uint8)
-        '''# convert to float in [0,1]
-        tensor = torch.from_numpy(img).permute(2,0,1).float().div(255.0)
-        torchvision.utils.save_image(tensor, img_path)'''
-        image = wandb.Image(img, caption=f"sample_epoch_{epoch}")
 
-
-        wandb.log({"examples": image})
-
-        
+        if wandb:
+            image = wandb.Image(img, caption=f"sample_epoch_{epoch}")
+            wandb.log({"examples": image})
+        else:
+            tensor = torch.from_numpy(img).permute(2,0,1).float().div(255.0)
+            torchvision.utils.save_image(tensor, f"outputSCALED_{seed}_{num_image}.png")
 
 
 def main():
@@ -155,12 +147,107 @@ def main():
     if args.do_wandb:
         setup_wandb(args.lr, args.epochs, args.batch_size, args.run_name)
     os.makedirs(args.chkps_logging_path, exist_ok=True)
+
+    # ───────────────────────────────────────────────────────────────────────────
+    # 1) LOAD & FREEZE VAE
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    vae = VAE().to(device)
+    ckpt = torch.load(args.vae_chkp, map_location=device)
+    vae.load_state_dict(ckpt)
+    vae.eval()
+    for p in vae.parameters():
+        p.requires_grad = False
+
+    # ───────────────────────────────────────────────────────────────────────────
+    # 2) LOAD (OR COMPUTE) sigma_latent
+    sigma_path = os.path.join(args.chkps_logging_path, "sigma_latent.txt")
+    if os.path.exists(sigma_path):
+        # If sigma_latent was saved previously, just read it:
+        with open(sigma_path, "r") as f:
+            sigma_val = float(f.read().strip())
+        sigma_latent = torch.tensor(sigma_val, device=device)
+        print(f"Loaded existing sigma_latent = {sigma_val:.6g} from {sigma_path}")
+    else:
+        # Compute sigma_latent from a single batch, then save to disk
+        if args.augment:
+            augment_transforms = Transforms.Compose([
+                Transforms.RandomHorizontalFlip(p=0.5),
+                Transforms.RandomRotation(degrees=90),
+                Transforms.ToTensor(),
+            ])
+            temp_dataset = PineappleDataset(
+                train=True,
+                train_ratio=0.8,
+                dataset_path=args.dataset_path,
+                transform=augment_transforms
+            )
+        else:
+            temp_dataset = PineappleDataset(train=True, train_ratio=0.8, dataset_path=args.dataset_path)
+        temp_loader = DataLoader(temp_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
+        first_batch = next(iter(temp_loader))
+        imgs0 = first_batch['image'].to(device)
+        with torch.no_grad():
+            b0, _, h0, w0 = imgs0.shape
+            noise0 = torch.randn((b0, 4, h0 // 8, w0 // 8), device=device)
+            latent0, _, _ = vae.encoder(imgs0, noise0)
+
+        mu_latent    = latent0.mean()         # scalar, not used directly
+        sigma_latent = latent0.std(unbiased=False)  # scalar tensor
+        sigma_val = sigma_latent.item()
+        with open(sigma_path, "w") as f:
+            f.write(f"{sigma_val:.12g}")
+        print(f"Computed and saved sigma_latent = {sigma_val:.6g} to {sigma_path}")
+
+    # ───────────────────────────────────────────────────────────────────────────
+    # 3) BUILD DIFFUSION MODEL (with or without attention) and set up optimizer/scheduler
+    if args.attention:
+        diffusion_model = Diffusion_att().to(device)
+    else:
+        diffusion_model = Diffusion().to(device)
+
+    sampler = DDPMSampler(generator=torch.Generator(device=device),
+                          num_training_steps=1000)
+    optimizer = torch.optim.AdamW(diffusion_model.parameters(), lr=args.lr)
+
+    total_steps = args.epochs * math.ceil(len(PineappleDataset(train=True, train_ratio=0.8, dataset_path=args.dataset_path)) / args.batch_size)
+    if not args.constant_lr:
+        scheduler = CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-5)
+
+    # ───────────────────────────────────────────────────────────────────────────
+    # 4) LOOK FOR AN EXISTING DIFFUSION-CHECKPOINT TO RESUME FROM
+    # We expect checkpoint filenames like: "diffusion_best_epoch{epoch}_loss{...}.pt"
+    ckpt_pattern = os.path.join(args.chkps_logging_path, "diffusion_*epoch*.pt")
+    all_ckpts = glob.glob(ckpt_pattern)
+    if len(all_ckpts) > 0:
+        # Extract epoch numbers via regex, e.g. diffusion_best_epoch12_loss0.1234_1.pt → 12
+        epoch_ckpts = []
+        for path in all_ckpts:
+            m = re.search(r"epoch(\d+)", os.path.basename(path))
+            if m:
+                epoch_ckpts.append((int(m.group(1)), path))
+        if len(epoch_ckpts) > 0:
+            # pick checkpoint with largest epoch
+            last_epoch, last_ckpt_path = max(epoch_ckpts, key=lambda x: x[0])
+            print(f"Found checkpoint for epoch {last_epoch} at {last_ckpt_path}, loading weights.")
+            state_dict = torch.load(last_ckpt_path, map_location=device)
+            diffusion_model.load_state_dict(state_dict)
+            start_epoch = last_epoch + 1
+        else:
+            # no valid "epoch#" in filename; start from scratch
+            start_epoch = 1
+    else:
+        start_epoch = 1
+
+    # If you also want to load optimizer/scheduler state, you'd need to have saved them explicitly.
+    # Otherwise, we just continue with a fresh optimizer and scheduler.
+
+    # ───────────────────────────────────────────────────────────────────────────
+    # 5) SET UP DATASET & DATALOADER (only once, since we might have overwritten temp_loader above)
     if args.augment:
-        # e.g. flip 50% / rot ±30°
         augment_transforms = Transforms.Compose([
             Transforms.RandomHorizontalFlip(p=0.5),
             Transforms.RandomRotation(degrees=90),
-            Transforms.ToTensor(),    # converts PIL→Tensor C×H×W, and scales [0–255]→[0–1]
+            Transforms.ToTensor(),
         ])
         dataset = PineappleDataset(
             train=True,
@@ -175,59 +262,21 @@ def main():
                         shuffle=True,
                         num_workers=args.num_workers)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Load & freeze VAE
-    vae = VAE().to(device)
-    ckpt = torch.load(args.vae_chkp, map_location=device)
-    vae.load_state_dict(ckpt)
-    vae.eval()
-    # ─── 0) Grab one batch to estimate μ̂ and σ̂ ───────────────────────────────────────────
-    first_batch = next(iter(loader))
-    imgs0 = first_batch['image'].to(device)
-    with torch.no_grad():
-        b0, _, h0, w0 = imgs0.shape
-        noise0 = torch.randn((b0, 4, h0 // 8, w0 // 8), device=device)
-        latent0, _, _ = vae.encoder(imgs0, noise0)   # latent0 shape: (b0, C, H, W)
-
-    # compute per-channel mean and std over batch+spatial dims
-    # keepdim so we can broadcast directly later
-    mu_latent    = latent0.mean()         # scalar
-    sigma_latent = latent0.std(unbiased=False)  # scalar
-    sigma_val = sigma_latent.item()   # convert 0-dim tensor → Python float
-
-    # pick a path to save it
-    sigma_path = os.path.join(args.chkps_logging_path, "sigma_latent.txt")
-
-    # write it
-    with open(sigma_path, "w") as f:
-        f.write(f"{sigma_val:.12g}")   # or just str(sigma_val)
-    for p in vae.parameters():
-        p.requires_grad = False
-
-    if args.attention:
-        # Use attention in the diffusion model
-        diffusion_model = Diffusion_att().to(device)
-    else:
-        diffusion_model = Diffusion().to(device)
-    sampler = DDPMSampler(generator=torch.Generator(device=device),
-                          num_training_steps=1000)
-
-    optimizer = torch.optim.AdamW(diffusion_model.parameters(), lr=args.lr)
-    total_steps = args.epochs * len(loader)
-    if not args.constant_lr:
-        scheduler = CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-5)
-
+    # ───────────────────────────────────────────────────────────────────────────
+    # 6) BEGIN/RESUME TRAINING LOOP
     T = sampler.num_train_timesteps
-    # initialize uniform weights
     if args.non_uniform_sampling:
         weights = torch.ones(T, dtype=torch.float32, device=device) / T
-    global_step = 0
+
+    global_step = (start_epoch - 1) * len(loader)
     best_loss = float('inf')
     epochs_no_improve = 0
     es_min_delta = args.es_min_delta
 
-    for epoch in range(1, args.epochs + 1):
+    # If you want to resume tracking best_loss from the checkpoint filename,
+    # you could parse the "loss{avg_loss:.4f}" part of the filename above. For simplicity, we reset best_loss.
+
+    for epoch in range(start_epoch, args.epochs + 1):
         diffusion_model.train()
         epoch_losses = []
         epoch_losses_gen = []
@@ -247,7 +296,6 @@ def main():
                     b, _, h, w = imgs.shape
                     noise_vae = torch.randn((b, 4, h // 8, w // 8), device=device)
                     latent, mu, logvar = vae.encoder(imgs, noise_vae)
-                    # apply *fixed* scaling exactly as in the paper:
                     latent = latent / sigma_latent
                     latent = latent.detach()
 
@@ -255,7 +303,6 @@ def main():
                 if not args.non_uniform_sampling:
                     t = torch.randint(0, T, (b,), device=device)
                 else:
-                    #    draw b indices from [0..T-1] with prob ∝ w
                     t = torch.multinomial(weights, num_samples=b, replacement=True).to(device)
 
                 noisy_lat, actual_noise, sqrt_alpha_prod, sqrt_one_minus_alpha_prod = sampler.add_noise(latent, t)
@@ -272,12 +319,11 @@ def main():
                 per_gen = F.mse_loss(pred_noise, actual_noise, reduction="none").mean(dim=[1,2,3])
                 per_vis = F.mse_loss(noisy_lat - actual_noise_pred, latent, reduction="none").mean(dim=[1,2,3])
                 per_tot = per_gen + args.rec_importance * per_vis
-                #per_tot = per_gen
 
                 # batch-level loss
                 loss_generation = per_gen.mean()
                 loss_visual    = per_vis.mean()
-                loss           = per_gen.mean()#per_tot.mean()
+                loss           = loss_generation  # or per_tot.mean()
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -294,13 +340,6 @@ def main():
 
                 # log batch metrics
                 global_step += 1
-                '''if args.do_wandb:
-                    wandb.log({
-                        "train/batch_loss_total":   loss.item(),
-                        "train/batch_loss_gen":     loss_generation.item(),
-                        "train/batch_loss_visual":  loss_visual.item(),
-                        "train/lr":                 optimizer.param_groups[0]['lr']
-                    }, step=global_step)'''
 
                 epoch_losses.append(loss.item())
                 epoch_losses_gen.append(loss_generation.item())
@@ -318,9 +357,6 @@ def main():
         if args.do_wandb:
             # log epoch-level bar plots
             log_bar("loss_generation_per_timestep", loss_gen_by_t, epoch)
-            #log_bar("loss_visual_per_timestep",     loss_vis_by_t, epoch)
-            #log_bar("loss_total_per_timestep",      loss_tot_by_t, epoch)
-
             wandb.log({
                 "train/epoch_loss":    avg_loss,
                 "train/epoch_loss_gen":avg_loss_gen,
@@ -329,25 +365,23 @@ def main():
                 "train/epoch_lr":      optimizer.param_groups[0]['lr'],
                 "epoch":               epoch
             }, step=global_step)
+
         if args.non_uniform_sampling:
-            # — now update sampling weights for next epoch —
-            # build a tensor of per-t average total loss
-            # fall back to the epoch‐wide average loss if a t was never sampled
-            default = avg_loss  # global avg loss over all batches this epoch
+            # update weights for next epoch
+            default = avg_loss
             means = []
-            for t in range(T):
-                vals = loss_tot_by_t.get(t, [])
+            for t_i in range(T):
+                vals = loss_tot_by_t.get(t_i, [])
                 if vals:
                     means.append(np.mean(vals))
                 else:
                     means.append(default)
-            avg_tot_losses = torch.tensor(means, dtype=torch.float32, device=device)
-            avg_tot_losses = avg_tot_losses + 1e-13
-            # normalize to sum to 1
+            avg_tot_losses = torch.tensor(means, dtype=torch.float32, device=device) + 1e-13
             weights = avg_tot_losses / avg_tot_losses.sum()
+
         # checkpointing & early-stopping
         if avg_loss + es_min_delta < best_loss:
-            if epoch!= 1:
+            if epoch != start_epoch:  # avoid treating the very first resumed epoch as "improvement"
                 best_loss = avg_loss
             epochs_no_improve = 0
             ckpt_path = os.path.join(
@@ -361,7 +395,7 @@ def main():
                 diffusion_model.eval()
                 sample_i(h, w, vae, diffusion_model,
                          torch.Generator(device=device),
-                         epoch, global_step, device, seed=42,sigma_latent=sigma_latent)
+                         epoch, global_step, device, seed=42, sigma_latent=sigma_latent)
                 diffusion_model.train()
         else:
             epochs_no_improve += 1
@@ -383,7 +417,7 @@ def main():
         diffusion_model.eval()
         sample_i(h, w, vae, diffusion_model,
                  torch.Generator(device=device),
-                 epoch, global_step, device, seed=42)
+                 epoch, global_step, device, seed=42, sigma_latent=sigma_latent)
 
     print("Training complete.")
 
