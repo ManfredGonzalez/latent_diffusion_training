@@ -30,22 +30,29 @@ if path_to_add not in sys.path:
 from VAE_training.VAE import VAE
 
 
-def setup_wandb(lr, epochs, batch_size,run_name):
+def setup_wandb(lr, epochs, batch_size, run_name, run_id=None):
     api_key = os.getenv("WANDB_API_KEY")
     wandb.login(key=api_key)
-    run = wandb.init(
-        entity="imagine-laboratory-conare",
-        project="SD_training_exp1",
-        name=run_name,
-        config={
+
+    init_args = {
+        "entity": "imagine-laboratory-conare",
+        "project": "SD_training_exp1",
+        "name": run_name,
+        "config": {
             "learning_rate": lr,
             "architecture": "stable_diffusion",
             "dataset": "Pineapples",
             "epochs": epochs,
             "batch_size": batch_size,
             "optimizer": "AdamW"
-        },
-    )
+        }
+    }
+    if run_id is not None:
+        # Resume into an existing run
+        init_args["id"] = run_id
+        init_args["resume"] = "allow"
+
+    run = wandb.init(**init_args)
     return run
 
 
@@ -98,6 +105,8 @@ def parse_args():
                         default=False,
                         help="Enable random left/right flips on the images"
                     )
+    parser.add_argument("--wandb_run_id", type=str, default=None,
+                    help="(Optional) existing W&B run ID to resume logging into")
     return parser.parse_args()
 
 
@@ -114,7 +123,7 @@ def log_bar(name, loss_dict, step):
     }, step=epoch)
 
 
-def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, seed,sigma_latent, wandb=True,num_image=None):
+def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, seed, sigma_latent, log_to_wandb=True, num_image=None):
     generator.manual_seed(seed)
     sampler_i = DDPMSampler(generator)
     sampler_i.set_inference_timesteps(1000)
@@ -134,7 +143,7 @@ def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, 
         img = np.clip(img, 0.0, 1.0)
         img = (img * 255).astype(np.uint8)
 
-        if wandb:
+        if log_to_wandb:
             image = wandb.Image(img, caption=f"sample_epoch_{epoch}")
             wandb.log({"examples": image})
         else:
@@ -145,7 +154,7 @@ def sample_i(h, w, vae, diffusion_model, generator, epoch, global_step, device, 
 def main():
     args = parse_args()
     if args.do_wandb:
-        setup_wandb(args.lr, args.epochs, args.batch_size, args.run_name)
+        setup_wandb(args.lr, args.epochs, args.batch_size, args.run_name, run_id=args.wandb_run_id)
     os.makedirs(args.chkps_logging_path, exist_ok=True)
 
     # ───────────────────────────────────────────────────────────────────────────

@@ -23,6 +23,10 @@ current_dir = os.getcwd()
 path_to_add = os.path.join(current_dir, "VAE_training")
 if path_to_add not in sys.path:
     sys.path.append(path_to_add)
+current_dir = os.getcwd()
+path_to_add = os.path.join(current_dir, "VAE_training/vae")
+if path_to_add not in sys.path:
+    sys.path.append(path_to_add)    
 
 from VAE_training.vae.vq_vae import VQVAE
 
