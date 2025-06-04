@@ -27,7 +27,7 @@ class PineappleDataset(Dataset):
     def __getitem__(self, idx):
         # 1. load + resize + to numpy H×W×C float32 [0–1]
         img = cv2.imread(self.images[idx], cv2.IMREAD_COLOR)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        #img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = cv2.resize(img, (self.resize_shape[1], self.resize_shape[0]))
         img = img.astype(np.float32) / 255.0
 
